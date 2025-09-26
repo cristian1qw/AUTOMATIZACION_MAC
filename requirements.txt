@@ -1,5 +1,0 @@
-pandas
-openpyxl
-paramiko
-scp
-python-dotenv
