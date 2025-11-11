@@ -1,2 +1,2 @@
 # AUTOMATIZACION_MAC
-Este proyecto que realiza modifcaciones a un archivo txt de un dispositivo repetidor de internet realizando validaciones de control de accesos y aprobaciones en python.
+Este proyecto consiste controlar el acceso  a la red en diferentes zonas del país, para ello, se  ingresan a las configuraciones del dispositivo repetidor de internet realizando cambios y validaciones de control de accesos o aprobaciones en python.
