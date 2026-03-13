@@ -22,11 +22,7 @@ class ejecutor:
 
         def __init__(self):
             
-            self.relative_path = "/sites/ActividadesGerenciaTI/Documentos compartidos/General/2.Operación/0. Telco/1. CONECTIVIDAD/1. CONECTIVIDAD STARLINK/1. Automatizacion Macs/MAC-1/Aprobacion.xlsx"
-            self.script_path = r"C:\Users\PC\INDEPENDENCE S.A\GerenciaTI - 0. Telco\1. CONECTIVIDAD\1. CONECTIVIDAD STARLINK\Automatizacion Macs\MAC-1\MACV2.py"
-            
-            
-            
+            self.script_path = r"C:\Users\PC\OneDrive - INDEPENDENCE S.A\GerenciaTI - Documentos 1\General\2.Operación\0. Telco\1. CONECTIVIDAD\1. CONECTIVIDAD STARLINK\1. Automatizacion Macs\MAC-1\MACV2.py"
             self.smtp_user,self.smtp_password, self.ssh_key2,self.site_url,self.client_id,self.client_secret = None,None,None,None,None,None
             self.smtp_user,self.smtp_password, self.ssh_key2,self.site_url,self.client_id,self.client_secret=self.contraseñas(None,None,None,None,None,None)
             self.credentials = ClientCredential(self.client_id, self.client_secret)
@@ -35,12 +31,12 @@ class ejecutor:
 
         def contraseñas(self,smtp_user,smtp_password,ssh_key2,site_url,client_id,client_secret):
             # 1. Cargar la clave
-            with open(r"C:\Users\PC\INDEPENDENCE S.A\GerenciaTI - 0. Telco\1. CONECTIVIDAD\1. CONECTIVIDAD STARLINK\Automatizacion Macs\variables\clave.key", "rb") as key_file:
+            with open(r"C:\Users\PC\OneDrive - INDEPENDENCE S.A\GerenciaTI - Documentos 1\General\2.Operación\0. Telco\1. CONECTIVIDAD\1. CONECTIVIDAD STARLINK\1. Automatizacion Macs\variables\clave.key", "rb") as key_file:
                 key = key_file.read()
             fernet = Fernet(key)
             
             # 2. Leer y desencriptar el archivo
-            with open(r"C:\Users\PC\INDEPENDENCE S.A\GerenciaTI - 0. Telco\1. CONECTIVIDAD\1. CONECTIVIDAD STARLINK\Automatizacion Macs\MAC-1\.env.enc", "rb") as enc_file:
+            with open(r"C:\Users\PC\OneDrive - INDEPENDENCE S.A\GerenciaTI - Documentos 1\General\2.Operación\0. Telco\1. CONECTIVIDAD\1. CONECTIVIDAD STARLINK\1. Automatizacion Macs\variables\.env.enc", "rb") as enc_file:
                 encrypted_data = enc_file.read()
             decrypted_data = fernet.decrypt(encrypted_data).decode()
 
@@ -181,6 +177,10 @@ class inclusion_mac(ejecutor):
                 lista.append(df_filtrado)
                 
             
+            if not lista:
+                print("No hay filas para procesar (torres no coinciden)")
+                return
+            
             df3 = (pd.concat(lista, ignore_index=True).reindex(columns=df3.columns).sort_values(by=[
               "FECHA","AV","MAC","TIPO","PROPIEDAD","identificacion","NOMBRE","CARGO","TORRE","CORREO","ESTADO","IP"]).reset_index(drop=True))
             
@@ -251,7 +251,7 @@ class inclusion_mac(ejecutor):
                 usuario = "ubnt"
                 ruta_remota = "/tmp/system.cfg"
                 carpeta_temporal = f"C:/Users/PC/temp_cfgs/"
-                Aprobados = pd.read_excel("Aprobados.xlsx", sheet_name="Sheet2")
+                Aprobados = pd.read_excel(r"C:\Users\PC\OneDrive - INDEPENDENCE S.A\GerenciaTI - Documentos 1\General\2.Operación\0. Telco\1. CONECTIVIDAD\1. CONECTIVIDAD STARLINK\1. Automatizacion Macs\MAC-1\Aprobados.xlsx", sheet_name="Sheet2")
                 
                 os.makedirs(carpeta_temporal, exist_ok=True)
                 ruta_local = os.path.join(carpeta_temporal, f"system_{ip.replace('.', '_')}.cfg")
@@ -392,7 +392,108 @@ wireless.1.mac_acl.{siguiente}.comment={nombre}"""
                         ssh.close()
                     if os.path.exists(ruta_local):
                         os.remove(ruta_local)
-                    
+
+        def eliminar_macs_dispositivo(self, ips, macs):
+            """Elimina MACs de la configuración de los dispositivos y aplica cambios.
+
+            Args:
+                ips (list): Lista de direcciones IP de los equipos.
+                macs (iterable): Lista de MACs (cadenas) a eliminar en cada dispositivo.
+
+            Retorna:
+                dict: Diccionario con IPs como claves y bool como valores (True si se aplicaron cambios).
+            """
+            macs_a_eliminar = {m.lower().strip() for m in macs if m}
+            if not macs_a_eliminar:
+                return {ip: False for ip in ips}
+
+            resultados = {}
+            for ip in ips:
+                resultados[ip] = self._eliminar_macs_en_ip(ip, macs_a_eliminar)
+            return resultados
+
+        def _eliminar_macs_en_ip(self, ip, macs_a_eliminar):
+            usuario = "ubnt"
+            ruta_remota = "/tmp/system.cfg"
+            carpeta_temporal = f"C:/Users/PC/temp_cfgs/"
+            os.makedirs(carpeta_temporal, exist_ok=True)
+            ruta_local = os.path.join(carpeta_temporal, f"system_{ip.replace('.', '_')}.cfg")
+
+            ssh = None
+            try:
+                clave = paramiko.RSAKey.from_private_key_file(self.ssh_key2)
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(
+                    ip,
+                    username=usuario,
+                    pkey=clave,
+                    disabled_algorithms=dict(pubkeys=["rsa-sha2-256", "rsa-sha2-512"]),
+                    timeout=10
+                )
+                print(f"✅ Conexión establecida con {ip} (eliminar MACs)")
+
+                with SCPClient(ssh.get_transport()) as scp:
+                    scp.get(ruta_remota, ruta_local)
+
+                with open(ruta_local, "r", encoding="utf-8") as f:
+                    contenido = f.read()
+
+                original = contenido
+
+                for m in re.finditer(r"wireless\.1\.mac_acl\.(\d+)\.mac=(.*?)\n", contenido, flags=re.IGNORECASE):
+                    idx = m.group(1)
+                    mac_actual = m.group(2).strip().lower()
+                    if mac_actual in macs_a_eliminar:
+                        # Eliminar mac + status + comment para ese índice
+                        for suffix in ["mac", "status", "comment"]:
+                            contenido = re.sub(
+                                rf"wireless\.1\.mac_acl\.{idx}\.{suffix}=.*\n",
+                                "",
+                                contenido,
+                                flags=re.IGNORECASE,
+                            )
+
+                # Normalizar saltos de línea consecutivos
+                contenido = re.sub(r"\n{3,}", "\n\n", contenido)
+
+                if contenido == original:
+                    print(f"ℹ️ [{ip}] No se detectaron MACs para eliminar")
+                    return False
+
+                with open(ruta_local, "w", encoding="utf-8") as f:
+                    f.write(contenido)
+
+                with SCPClient(ssh.get_transport()) as scp:
+                    scp.put(ruta_local, ruta_remota)
+
+                comandos = [
+                    "lock /var/lock/.system.cfg.lock",
+                    "cp /tmp/system.cfg /etc/system.cfg",
+                    "cfgmtd -f /etc/system.cfg -w",
+                    "wlanconfig ath0 listmac",
+                    "iwpriv ath0 maccmd 1",
+                    "iwpriv ath0 maccmd 4",
+                    "lock -u /var/lock/.system.cfg.lock"
+                ]
+                for cmd in comandos:
+                    stdin, stdout, stderr = ssh.exec_command(cmd)
+                    stdout.read().decode()
+                    stderr.read().decode()
+
+                print(f"✅ [{ip}] MACs eliminadas: {', '.join(sorted(macs_a_eliminar))}")
+                return True
+
+            except Exception as e:
+                print(f"❌ [{ip}] Error eliminando MACs: {e}")
+                return False
+
+            finally:
+                if ssh is not None:
+                    ssh.close()
+                if os.path.exists(ruta_local):
+                    os.remove(ruta_local)
+
         def insertar_tabla(self, tabla, N_hoja, df_resultado):
             
             # Cargar libro y buscar última fila usada
@@ -500,7 +601,7 @@ wireless.1.mac_acl.{siguiente}.comment={nombre}"""
             self.smtp_user,self.smtp_password, self.ssh_key2,self.site_url,self.client_id,self.client_secret=self.contraseñas(None,None,None,None,None,None)
             self.credentials = ClientCredential(self.client_id, self.client_secret)
             self.ctx = ClientContext(self.site_url).with_credentials(self.credentials)
-            self.df_listado = pd.read_excel("C:/Users/PC/INDEPENDENCE S.A/GerenciaTI - 0. Telco/1. CONECTIVIDAD/1. CONECTIVIDAD STARLINK/Automatizacion Macs/MAC-1/Listado.xlsx")
+            self.df_listado = pd.read_excel(r"C:\Users\PC\OneDrive - INDEPENDENCE S.A\GerenciaTI - Documentos 1\General\2.Operación\0. Telco\1. CONECTIVIDAD\1. CONECTIVIDAD STARLINK\1. Automatizacion Macs\MAC-1\Listado.xlsx")
             
             # Obtener datos de sharepoint
             df_resultado=self.sharepoint_online()
